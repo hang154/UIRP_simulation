@@ -1,79 +1,81 @@
 # gen_config.py
-import json
-import random
-import datetime
+"""
+무작위 config.json 생성기
+  • tasks.py 의 scene_file_size (list) 지원
+CLI 예시:
+  python gen_config.py --tasks 8 --providers 4 --seed 777 --out sample.json
+"""
+import json, random, datetime, argparse, sys
 from pathlib import Path
 from typing import List, Dict, Any
 
-# ---------- 하드코딩된 기준일 ----------
-BASE_DAY_1 = datetime.datetime(2025, 7, 12)  # 첫날 00:00
-BASE_DAY_2 = BASE_DAY_1 + datetime.timedelta(days=1)
+# 기준일
+DAY0 = datetime.datetime(2025, 7, 12, 0, 0, 0)
 
-# ---------- 가우스 샘플 + 클램핑 ----------
-def g(mean: float, std: float, lo: float, hi: float) -> float:
-    """정규분포 샘플 → [lo, hi] 로 제한"""
-    return max(lo, min(hi, random.gauss(mean, std)))
+def _g(mu: float, sigma: float, lo: float, hi: float) -> float:
+    """정규분포 → [lo,hi] 클램핑"""
+    return max(lo, min(hi, random.gauss(mu, sigma)))
 
-# ---------- 태스크 & 프로바이더 생성 함수 ----------
-def make_tasks(n: int) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
-    for i in range(1, n + 1):
-        st = BASE_DAY_1 + datetime.timedelta(
-            hours=g(8, 2, 0, 18),            # 0~18시 사이
-            minutes=g(0, 30, 0, 59)
-        )
-        dl = st + datetime.timedelta(
-            hours=g(36, 12, 12, 96)          # 최소 12h, 최대 4일
-        )
+def _rand_interval(base: datetime.datetime) -> List[str]:
+    """provider 가용시간 하나 생성(ISO strings)"""
+    start = base + datetime.timedelta(hours=_g(8, 2, 6, 21))
+    dur   = _g(6, 2, 3, 12)
+    end   = start + datetime.timedelta(hours=dur)
+    return [start.isoformat(timespec="seconds"),
+            end.isoformat(timespec="seconds")]
+
+def _make_tasks(n: int) -> List[Dict[str, Any]]:
+    out = []
+    for i in range(1, n+1):
+        # 시작 & 마감
+        st = DAY0 + datetime.timedelta(hours=_g(7,3,0,23))
+        dl = st  + datetime.timedelta(hours=_g(48,18,12,120))
+
+        scene_n = int(_g(4,1.5,1,8))
+        # 장면별 파일 크기 리스트
+        base_sz = _g(150,40,20,400)
+        scene_sizes = [round(_g(base_sz,15,10,600),1) for _ in range(scene_n)]
 
         t = {
-            "id": f"task_{i}",
-            "global_file_size": round(g(600, 150, 100, 1200), 1),   # MB
-            "scene_number": int(g(4, 1.2, 1, 8)),
-            "scene_workload": round(g(180, 60, 30, 400), 1),        # GPU·h
-            "bandwidth": round(g(60, 15, 10, 200), 1),              # MB/s
-            "budget": round(g(450, 120, 100, 2000), 1),             # $
-            "deadline": dl.isoformat(timespec="seconds"),
-            "start_time": st.isoformat(timespec="seconds"),
+            "id":                f"task_{i}",
+            "global_file_size":  round(_g(600,200,50,1500),1),
+            "scene_number":      scene_n,
+            "scene_file_size":   scene_sizes,               # 리스트로 전달
+            "scene_workload":    round(_g(200,60,30,500),1),
+            "bandwidth":         round(_g(80,25,10,400),1),
+            "budget":            round(_g(800,300,100,5000),1),
+            "start_time":        st.isoformat(timespec="seconds"),
+            "deadline":          dl.isoformat(timespec="seconds"),
         }
         out.append(t)
     return out
 
-
-def make_providers(n: int) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
-    for i in range(1, n + 1):
-        intervals = []
-        for base_day in (BASE_DAY_1, BASE_DAY_2):
-            start = base_day + datetime.timedelta(
-                hours=g(8 + i, 1.5, 6, 20))          # 겹치지 않게 약간 시프트
-            dur_h = g(6, 2, 3, 12)
-            end = start + datetime.timedelta(hours=dur_h)
-            intervals.append([
-                start.isoformat(timespec="seconds"),
-                end.isoformat(timespec="seconds")
-            ])
-
+def _make_providers(n: int) -> List[Dict[str, Any]]:
+    out = []
+    for i in range(1, n+1):
+        iv = [
+            _rand_interval(DAY0),
+            _rand_interval(DAY0 + datetime.timedelta(days=1))
+        ]
         p = {
-            "throughput": round(g(30, 10, 5, 100), 1),   # 작업 속도
-            "available_hours": intervals,
-            "price": round(g(5, 1,   1, 15), 2),         # $/GPU·h
-            "bandwidth": round(g(90, 20, 20, 400), 1),   # MB/s
+            "throughput":       round(_g(35,12,5,120),1),
+            "available_hours":  iv,
+            "price":            round(_g(5,1.2,1,20),2),
+            "bandwidth":        round(_g(100,30,20,800),1),
         }
         out.append(p)
     return out
 
-# ---------- 메인 ----------
 def generate_cfg(
-    n_tasks: int = 5,
-    n_providers: int = 3,
-    seed: int = 42,
-    filepath: str = "config_generated.json"
+    n_tasks: int,
+    n_providers: int,
+    seed: int,
+    filepath: str = "config.json"
 ) -> None:
     random.seed(seed)
     cfg = {
-        "tasks": make_tasks(n_tasks),
-        "providers": make_providers(n_providers),
+        "tasks":     _make_tasks(n_tasks),
+        "providers": _make_providers(n_providers),
     }
     Path(filepath).write_text(
         json.dumps(cfg, indent=2, ensure_ascii=False),
@@ -82,26 +84,10 @@ def generate_cfg(
     print(f"✔ 생성 완료 → {filepath}")
 
 if __name__ == "__main__":
-    # Jupyter 등 불필요한 인자를 무시하도록 parse_known_args 사용
-    import argparse, sys
-
-    parser = argparse.ArgumentParser(
-        description="EDF 시뮬레이션용 config.json 생성기",
-        add_help=True
-    )
-    parser.add_argument("--tasks", type=int, default=5,
-                        help="생성할 Task 개수")
-    parser.add_argument("--providers", type=int, default=3,
-                        help="생성할 Provider 개수")
-    parser.add_argument("--seed", type=int, default=42,
-                        help="난수 시드")
-    parser.add_argument("--out", type=str, default="config_generated.json",
-                        help="출력 파일명")
-    args, _ = parser.parse_known_args()
-
-    generate_cfg(
-        n_tasks=args.tasks,
-        n_providers=args.providers,
-        seed=args.seed,
-        filepath=args.out
-    )
+    ap = argparse.ArgumentParser(description="랜덤 config.json 생성기")
+    ap.add_argument("--tasks",     type=int, default=5)
+    ap.add_argument("--providers", type=int, default=3)
+    ap.add_argument("--seed",      type=int, default=42)
+    ap.add_argument("--out",       type=str, default="config.json")
+    args, _ = ap.parse_known_args(sys.argv[1:])   # Jupyter -f 무시
+    generate_cfg(args.tasks, args.providers, args.seed, args.out)
