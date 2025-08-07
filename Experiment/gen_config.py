@@ -26,8 +26,8 @@ DEFAULT_JOBLOG   = "./cluster_job_log"
 DEFAULT_TRAIN    = "./train.json"
 
 # ── 분석 기간 (UTC) ─────────────────────────────────────────────
-T0 = datetime.datetime(2017, 10, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
-T1 = datetime.datetime(2017, 11, 30, 23, 59, 59, tzinfo=datetime.timezone.utc)
+T0 = datetime.datetime(2017, 10, 1, 0, 0, 0)
+T1 = datetime.datetime(2017, 11, 30, 23, 59, 59)
 RANGE_SEC = int((T1 - T0).total_seconds())
 
 # ── 난수 시드 ───────────────────────────────────────────────────
