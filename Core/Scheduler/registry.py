@@ -10,10 +10,13 @@ DISP_REG = {"bf": SequentialDispatcher, "greedy": SequentialDispatcher}
 
 try:
     from Core.Scheduler.combo_generator.cpsat import CPSatComboGenerator
+    from Core.Scheduler.combo_generator.hybrid_cp import HybridCPComboGenerator
     from Core.Scheduler.dispatcher.sequential import CPSatDispatcher
     if CPSatComboGenerator:
         COMBO_REG["cp"] = CPSatComboGenerator
         DISP_REG["cp"] = CPSatDispatcher
+        COMBO_REG["hybrid_cp"] = HybridCPComboGenerator
+        DISP_REG["hybrid_cp"] = CPSatDispatcher
 except ImportError:
     print("ERROR")
     pass
