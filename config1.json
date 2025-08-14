@@ -1,0 +1,102 @@
+{
+  "tasks": [
+    {
+      "id": "task_TXHeavy",
+      "global_file_size": 1500.0,
+      "scene_number": 2,
+      "scene_workload": 80.0,
+      "bandwidth": 15.0,
+      "budget": 120.0,
+      "deadline": "2025-07-13T18:00:00",
+      "start_time": "2025-07-12T07:30:00"
+    },
+    {
+      "id": "task_CPUHeavy",
+      "global_file_size": 300.0,
+      "scene_number": 4,
+      "scene_workload": 600.0,
+      "bandwidth": 120.0,
+      "budget": 450.0,
+      "deadline": "2025-07-14T04:00:00",
+      "start_time": "2025-07-12T09:00:00"
+    },
+    {
+      "id": "task_TightBudget",
+      "global_file_size": 400.0,
+      "scene_number": 3,
+      "scene_workload": 150.0,
+      "bandwidth": 60.0,
+      "budget": 90.0,
+      "deadline": "2025-07-13T23:00:00",
+      "start_time": "2025-07-12T08:00:00"
+    },
+    {
+      "id": "task_TightDL",
+      "global_file_size": 500.0,
+      "scene_number": 5,
+      "scene_workload": 220.0,
+      "bandwidth": 80.0,
+      "budget": 550.0,
+      "deadline": "2025-07-12T22:00:00",
+      "start_time": "2025-07-12T10:30:00"
+    },
+    {
+      "id": "task_CacheTest",
+      "global_file_size": 900.0,
+      "scene_number": 6,
+      "scene_workload": 300.0,
+      "bandwidth": 90.0,
+      "budget": 700.0,
+      "deadline": "2025-07-15T06:00:00",
+      "start_time": "2025-07-12T12:00:00"
+    }
+  ],
+  "providers": [
+    {
+      "throughput": 18.0,
+      "bandwidth": 50.0,
+      "price": 2.8,
+      "available_hours": [
+        ["2025-07-12T07:00:00", "2025-07-12T11:00:00"],
+        ["2025-07-12T15:00:00", "2025-07-12T23:00:00"],
+        ["2025-07-13T08:00:00", "2025-07-13T20:00:00"]
+      ]
+    },
+    {
+      "throughput": 60.0,
+      "bandwidth": 140.0,
+      "price": 9.0,
+      "available_hours": [
+        ["2025-07-12T09:00:00", "2025-07-12T15:00:00"],
+        ["2025-07-13T18:00:00", "2025-07-13T23:30:00"]
+      ]
+    },
+    {
+      "throughput": 28.0,
+      "bandwidth": 200.0,
+      "price": 5.5,
+      "available_hours": [
+        ["2025-07-12T06:30:00", "2025-07-12T14:30:00"],
+        ["2025-07-13T10:00:00", "2025-07-13T18:00:00"]
+      ]
+    },
+    {
+      "throughput": 0.0,
+      "bandwidth": 100.0,
+      "price": 4.2,
+      "available_hours": [
+        ["2025-07-12T11:00:00", "2025-07-12T19:00:00"],
+        ["2025-07-13T12:00:00", "2025-07-13T22:00:00"]
+      ]
+    },
+    {
+      "throughput": 35.0,
+      "bandwidth": 90.0,
+      "price": 3.9,
+      "available_hours": [
+        ["2025-07-12T07:00:00", "2025-07-12T23:59:00"],
+        ["2025-07-13T07:00:00", "2025-07-13T23:59:00"]
+      ]
+    }
+  ]
+}
