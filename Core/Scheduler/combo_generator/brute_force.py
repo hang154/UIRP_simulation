@@ -1,7 +1,6 @@
 # Core/Scheduler/combo_generator/brute_force.py
 from __future__ import annotations
 import math
-from itertools import product
 from functools import reduce
 from operator import mul
 from Core.Scheduler.interface import ComboGenerator
@@ -34,24 +33,26 @@ class BruteForceGenerator(ComboGenerator):
         if not scene_ids:
             return 0
         kprov = min(self.kprov, len(ps))
-        feasible = []
+        feasible: list[list[int]] = []
         for sid in scene_ids:
             cands = self._best_providers(t, ps, sid, ev, kprov=kprov)
             feasible.append(cands)
 
-        from functools import lru_cache
-
-        @lru_cache(None)
-        def dfs(i, mask):
-            if i == len(feasible):
-                return 1
-            total = dfs(i + 1, mask)  # skip
-            for p in feasible[i]:
-                if mask & (1 << p) == 0:
-                    total += dfs(i + 1, mask | (1 << p))
-            return total
-
-        return dfs(0, 0) - 1  # exclude all-skip
+        # Iterative dynamic programming to count assignments while enforcing
+        # the "one scene per provider" constraint. ``dp`` maps a bitmask of
+        # used providers to the number of ways it can be achieved. For each
+        # scene we either skip it or assign it to a provider that has not been
+        # used yet. The all-skip configuration is removed at the end.
+        dp = {0: 1}
+        for cands in feasible:
+            new_dp = dict(dp)  # skipping this scene
+            for mask, cnt in dp.items():
+                for p in cands:
+                    if mask & (1 << p) == 0:
+                        new_mask = mask | (1 << p)
+                        new_dp[new_mask] = new_dp.get(new_mask, 0) + cnt
+            dp = new_dp
+        return sum(dp.values()) - 1
 
     def best_combo(self, t, ps, now, ev, verbose=False):
         # 미배정 씬만
@@ -67,35 +68,46 @@ class BruteForceGenerator(ComboGenerator):
             cands.append(-1)  # 연기 옵션
             cand_lists.append((sid, cands))
 
+        # Total number of unique combinations (excluding all-skip) for progress
+        # reporting. ``reduce`` is used for the original cartesian product to
+        # keep backward compatible iteration count in verbose mode.
         if verbose:
-            iter_total = reduce(mul, (len(c[1]) for c in cand_lists), 1)
-            search_space = self.time_complexity(t, ps, now, ev)
-            print(f"[BF] search space={search_space} (iterations={iter_total})")
+            iter_total = self.time_complexity(t, ps, now, ev)
+            prod_total = reduce(mul, (len(c[1]) for c in cand_lists), 1)
+            print(f"[BF] search space={iter_total} (iterations={prod_total})")
         else:
             iter_total = None
 
-        best = (float("-inf"), None)
-        iterator = product(*[cl[1] for cl in cand_lists])
+        best_score = float("-inf")
+        best_res = None
+
+        def generate(idx: int, used: set[int], cmb: list[int]):
+            if idx == len(cand_lists):
+                if any(pid != -1 for pid in cmb):
+                    yield cmb.copy()
+                return
+            sid, candidates = cand_lists[idx]
+            for pid in candidates:
+                if pid != -1 and pid in used:
+                    continue
+                cmb[sid] = pid
+                if pid != -1:
+                    used.add(pid)
+                yield from generate(idx + 1, used, cmb)
+                if pid != -1:
+                    used.remove(pid)
+                cmb[sid] = -1
+
+        iterator = generate(0, set(), [-1] * t.scene_number)
         if iter_total is not None:
             iterator = tqdm(iterator, total=iter_total, disable=not verbose)
-        for picks in iterator:
-            # 전량 연기 제외
-            if not any(pid != -1 for pid in picks):
-                continue
-            # HARD: provider 중복 배정 금지
-            used = [pid for pid in picks if pid != -1]
-            if len(set(used)) != len(used):
-                continue
-
-            cmb = [-1] * t.scene_number
-            for (sid, _), pid in zip(cand_lists, picks):
-                cmb[sid] = pid
-
+        for cmb in iterator:
             ok, t_tot, cost, deferred, overB, overDL = ev.feasible(t, cmb, now, ps)
             if not ok:
                 continue
             score = ev.efficiency(t, cmb, ps, now, t_tot, cost, deferred, overB, overDL)
-            if score > best[0]:
-                best = (score, (cmb, t_tot, cost))
+            if score > best_score:
+                best_score = score
+                best_res = (cmb, t_tot, cost)
 
-        return None if best[1] is None else best[1]
+        return best_res
