@@ -31,6 +31,13 @@ class BaselineScheduler:
         self.verbose = verbose
         self.waiting_tasks: List[Task] = []
         self.results: List[Assignment] = []
+        # Tasks that were attempted but could not be scheduled under the
+        # current provider state. These will be skipped until the provider
+        # availability changes.
+        self._unschedulable: set[str] = set()
+        # Timestamp of the next provider availability change. Scheduling is
+        # skipped until this time unless new tasks arrive.
+        self._next_provider_event: datetime.datetime | None = None
 
     def _feed(self, now, tasks):
         ids = {t.id for t in self.waiting_tasks}
@@ -51,10 +58,15 @@ class BaselineScheduler:
             # Skip tasks that are already complete
             if all(st is not None for st, _ in t.scene_allocation_data):
                 continue
+            # Skip tasks known to be unschedulable until provider state changes
+            if t.id in self._unschedulable:
+                remain.append(t)
+                continue
 
             best = self.generator.best_combo(t, ps, now, self.evaluator, verbose=self.verbose >= 2)
             if best is None:
                 remain.append(t)
+                self._unschedulable.add(t.id)
                 continue
             cmb, t_tot, cost = best
             if self.verbose >= 2:
@@ -67,6 +79,14 @@ class BaselineScheduler:
                 remain.append(t)
         self.waiting_tasks = remain
         return new
+
+    def _compute_next_event(self, ps: Providers, after: datetime.datetime) -> datetime.datetime | None:
+        """Earliest time when provider availability may change."""
+        times: List[datetime.datetime] = []
+        for p in ps:
+            times += [f for *_, _, f in p.schedule if f > after]
+            times += [s for s, _ in getattr(p, "available_hours", []) if s > after]
+        return min(times) if times else None
 
     def run(self, tasks: Tasks, ps: Providers,
             time_start: datetime.datetime | None = None,
@@ -89,7 +109,17 @@ class BaselineScheduler:
             feed_elapsed = time.time() - step_start
             waiting_before = len(self.waiting_tasks)
             sched_start = time.time()
-            new = self._schedule_once(now, ps)
+
+            need_schedule = any(t.id not in self._unschedulable for t in self.waiting_tasks)
+            if self._next_provider_event and now >= self._next_provider_event:
+                self._unschedulable.clear()
+                need_schedule = True
+            if need_schedule:
+                new = self._schedule_once(now, ps)
+                self._next_provider_event = self._compute_next_event(ps, now)
+            else:
+                new = []
+
             sched_elapsed = time.time() - sched_start
             waiting_after = len(self.waiting_tasks)
             self.results += new
