@@ -10,9 +10,6 @@ from Core.Scheduler.interface import ComboGenerator
 _SCALE = 1000
 _BIG   = 10**9
 
-# weights: (time, budget_penalty, deadline_penalty, provider_price, idle)
-DEFAULT_WEIGHTS = (1.0, 200.0, 500.0, 1.0, 0.0)
-
 
 def _cap_now_hours_from_avail(prov, now: dt.datetime) -> float:
     """Length of current available window starting at now (hours)."""
@@ -109,12 +106,6 @@ def _build_common_model(t, ps, now):
     over_deadline = m.NewIntVar(0, _BIG, "over_deadline")
     m.Add(over_deadline >= makespan - window_sec)
 
-    # 가능하면 최소 1개 이상 배치
-    unassigned = [s for s in range(S) if t.scene_allocation_data[s][0] is None]
-    has_any_finite = any(tot_int[s][p] < _BIG for s in unassigned for p in range(P))
-    if has_any_finite:
-        m.Add(sum(y[s] for s in unassigned) >= 1)
-
     return m, x, y, tot_int, cost_int, prof_int, total_cost, makespan, over_budget, over_deadline
 
 class CPSatComboGenerator(ComboGenerator):
@@ -148,60 +139,59 @@ class CPSatComboGenerator(ComboGenerator):
         if verbose:
             space = self.time_complexity(t, ps, now, ev)
             print(f"[CP] search space={space}")
-        a1, a2, a3, b1, _ = DEFAULT_WEIGHTS
 
-        # 공통 제약 구성
-        m1, x1, y1, *_ = _build_common_model(t, ps, now)
+        m, x, y, *_rest = _build_common_model(t, ps, now)
+        total_cost, makespan, over_budget, over_deadline = _rest[-4:]
 
-        # 1단계: 배치 수 최대화
-        m1.Maximize(sum(y1[s] for s in range(t.scene_number)
-                        if t.scene_allocation_data[s][0] is None))
-        solver1 = cp_model.CpSolver()
+        # 미배치 씬 수
+        unassigned = [s for s in range(t.scene_number)
+                      if t.scene_allocation_data[s][0] is None]
+        n_unassigned = len(unassigned)
+        if n_unassigned > 0:
+            deferred = m.NewIntVar(0, n_unassigned, "deferred")
+            m.Add(deferred + sum(y[s] for s in unassigned) == n_unassigned)
+        else:
+            deferred = m.NewIntVar(0, 0, "deferred")
+
+        # 시간/데드라인 초과를 시간 단위로 변환
+        makespan_h = m.NewIntVar(0, _BIG, "makespan_h")
+        m.Add(makespan_h * 3600 == makespan)
+        over_deadline_h = m.NewIntVar(0, _BIG, "over_deadline_h")
+        m.Add(over_deadline_h * 3600 == over_deadline)
+
+        wt = getattr(ev, "WT", 1.0)
+        wc = getattr(ev, "WC", 1.0)
+        wd = getattr(ev, "WD", 1.0)
+        wb = getattr(ev, "WB", 1.0)
+        wdl = getattr(ev, "WDL", 1.0)
+
+        m.Minimize(
+            int(wt * _SCALE) * makespan_h +
+            int(wc * _SCALE) * total_cost +
+            int(wd * _SCALE) * deferred +
+            int(wb * _SCALE) * over_budget +
+            int(wdl * _SCALE) * over_deadline_h
+        )
+
+        solver = cp_model.CpSolver()
         if verbose:
-            solver1.parameters.log_search_progress = True
-        solver1.parameters.max_time_in_seconds = 10
-        status1 = solver1.Solve(m1)
-        if status1 not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            return None
-        y_opt = int(sum(solver1.Value(y1[s]) for s in range(t.scene_number)
-                        if t.scene_allocation_data[s][0] is None))
-        if y_opt == 0:
-            return None  # 이번 스텝 배치 불가
-
-        # 2단계: 배치 수를 y_opt 이상으로 고정하고, 시간/비용 패널티 최소화
-        m2, x2, y2, tot_int2, cost_int2, prof_int2, total_cost2, makespan2, overB2, overDL2 = _build_common_model(t, ps, now)
-        m2.Add(sum(y2[s] for s in range(t.scene_number)
-                   if t.scene_allocation_data[s][0] is None) >= y_opt)
-
-        prof_sum = sum(prof_int2[s][p] * x2[s][p] for s in range(t.scene_number) for p in range(len(ps)))
-        m2.Minimize(int(a1*_SCALE) * makespan2 +
-                    int(a2*_SCALE) * overB2 +
-                    int(a3*_SCALE) * overDL2 +
-                    int(b1*_SCALE) * prof_sum)
-
-        solver2 = cp_model.CpSolver()
-        if verbose:
-            solver2.parameters.log_search_progress = True
-        solver2.parameters.max_time_in_seconds = 10
-        status2 = solver2.Solve(m2)
-        if status2 not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            solver.parameters.log_search_progress = True
+        solver.parameters.max_time_in_seconds = 10
+        status = solver.Solve(m)
+        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             return None
 
-        # 해 추출
         cmb: List[int] = []
         for s in range(t.scene_number):
             if t.scene_allocation_data[s][0] is not None:
                 cmb.append(t.scene_allocation_data[s][1])
                 continue
-            if solver2.BooleanValue(y2[s]) == 0:
-                cmb.append(-1)
-                continue
-            chosen = None
+            chosen = -1
             for p in range(len(ps)):
-                if solver2.BooleanValue(x2[s][p]):
+                if solver.BooleanValue(x[s][p]):
                     chosen = p
                     break
-            cmb.append(chosen if chosen is not None else -1)
+            cmb.append(chosen)
 
         ok, t_tot, cost, _, _, _ = ev.feasible(t, cmb, now, ps)
         if not ok:
