@@ -51,8 +51,7 @@ def test_baseline_time_cost_skips_global_file_after_first_scene():
 
     # First scene scheduled on provider -> global file already transmitted
     p.schedule.append((t.id, 0, dt.datetime(2024, 1, 1, 8, 0), dt.datetime(2024, 1, 1, 9, 0)))
-    ev2 = BaselineEvaluator()
-    d2, _ = ev2.time_cost(t, 1, p)
+    d2, _ = ev.time_cost(t, 1, p)
     assert d2 == pytest.approx(10.0 / 10.0 / 3600.0)
 
 
