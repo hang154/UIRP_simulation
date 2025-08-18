@@ -20,6 +20,8 @@ class BaselineEvaluator(MetricEvaluator):
         WDL: float = 500.0  # 데드라인초과 패널티 (hours)
     ):
         self._c: Dict[tuple, float] = {}
+        # key: (task_id, sched_len_per_provider)
+        self._spent_cache: Dict[tuple, float] = {}
         self.WT, self.WC, self.WD, self.WB, self.WDL = WT, WC, WD, WB, WDL
 
     # -------- 기본 시간 계산(전송+연산) 캐시 --------
@@ -82,16 +84,20 @@ class BaselineEvaluator(MetricEvaluator):
             if len(sids) > 1:
                 return False, math.inf, math.inf, deferred, math.inf, math.inf
 
-        # 과거 같은 task의 지출
-        spent = 0.0
-        for prov in ps:
-            for rec in getattr(prov, "schedule", []):
-                if len(rec) == 3:
-                    tid, st, ft = rec
-                else:
-                    tid, _sid, st, ft = rec
-                if tid == t.id:
-                    spent += ((ft - st).total_seconds()/3600.0) * prov.price_per_gpu_hour
+        # 과거 같은 task의 지출 (provider 스케줄 길이 기반 캐시)
+        key = (t.id, tuple(len(getattr(p, "schedule", [])) for p in ps))
+        spent = self._spent_cache.get(key)
+        if spent is None:
+            spent = 0.0
+            for prov in ps:
+                for rec in getattr(prov, "schedule", []):
+                    if len(rec) == 3:
+                        tid, st, ft = rec
+                    else:
+                        tid, _sid, st, ft = rec
+                    if tid == t.id:
+                        spent += ((ft - st).total_seconds()/3600.0) * prov.price_per_gpu_hour
+            self._spent_cache[key] = spent
 
         incr_cost = 0.0
         per_prov_h: Dict[int, float] = {}
