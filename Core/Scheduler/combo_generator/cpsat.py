@@ -37,7 +37,10 @@ def _build_common_model(t, ps, now):
             if bw <= 0 or thr <= 0:
                 tx = cmp = float("inf")
             else:
-                size = t.global_file_size + t.scene_size(s)
+                has_global = any(rec[0] == t.id for rec in getattr(prov, "schedule", []))
+                size = t.scene_size(s)
+                if not has_global:
+                    size += t.global_file_size
                 tx = size / bw / 3600.0
                 cmp = t.scene_workload / thr
             tot = tx + cmp

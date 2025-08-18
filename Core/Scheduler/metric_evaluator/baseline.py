@@ -28,7 +28,14 @@ class BaselineEvaluator(MetricEvaluator):
         if k in self._c:
             return self._c[k]
         bw = min(t.bandwidth, p.bandwidth)
-        v = float("inf") if bw <= 0 else (t.global_file_size + t.scene_size(s)) / bw / 3600
+        if bw <= 0:
+            v = float("inf")
+        else:
+            has_global = any(rec[0] == t.id for rec in getattr(p, "schedule", []))
+            size = t.scene_size(s)
+            if not has_global:
+                size += t.global_file_size
+            v = size / bw / 3600
         self._c[k] = v
         return v
 
