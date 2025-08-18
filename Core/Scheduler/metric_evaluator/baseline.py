@@ -26,14 +26,14 @@ class BaselineEvaluator(MetricEvaluator):
 
     # -------- 기본 시간 계산(전송+연산) 캐시 --------
     def _t_tx(self, t, s, p):
-        k = ("tx", t.id, s, p)
+        has_global = any(rec[0] == t.id for rec in getattr(p, "schedule", []))
+        k = ("tx", t.id, s, p, has_global)
         if k in self._c:
             return self._c[k]
         bw = min(t.bandwidth, p.bandwidth)
         if bw <= 0:
             v = float("inf")
         else:
-            has_global = any(rec[0] == t.id for rec in getattr(p, "schedule", []))
             size = t.scene_size(s)
             if not has_global:
                 size += t.global_file_size
