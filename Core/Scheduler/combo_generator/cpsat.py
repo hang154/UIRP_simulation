@@ -129,19 +129,21 @@ class CPSatComboGenerator(ComboGenerator):
                     cands.append(p_idx)
             feasible.append(cands)
 
-        from functools import lru_cache
-
-        @lru_cache(None)
-        def dfs(i, mask):
-            if i == len(feasible):
-                return 1
-            total = dfs(i + 1, mask)  # skip
-            for p in feasible[i]:
-                if mask & (1 << p) == 0:
-                    total += dfs(i + 1, mask | (1 << p))
-            return total
-
-        return dfs(0, 0) - 1
+        # Use iterative dynamic programming instead of recursion to avoid
+        # hitting Python's recursion depth limit when many scenes are
+        # unassigned. `dp` maps a provider usage mask to the number of ways
+        # it can be formed. For each scene we either skip assigning it or
+        # assign it to a feasible provider that hasn't been used yet.
+        dp = {0: 1}
+        for cands in feasible:
+            new_dp = dict(dp)  # accounts for skipping this scene
+            for mask, cnt in dp.items():
+                for p in cands:
+                    if mask & (1 << p) == 0:
+                        new_mask = mask | (1 << p)
+                        new_dp[new_mask] = new_dp.get(new_mask, 0) + cnt
+            dp = new_dp
+        return sum(dp.values()) - 1
     def best_combo(self, t, ps, now, ev, verbose=False):
         if verbose:
             space = self.time_complexity(t, ps, now, ev)
