@@ -168,7 +168,7 @@ if __name__ == "__main__":
     sim = Simulator(args.config)
     sch = BaselineScheduler(algo=args.algo,
                             verbose=args.v >= 1,
-                            time_gap=datetime.timedelta(hours=1))
+                            time_gap=datetime.timedelta(minutes=5))
     sim.schedule(sch)
     pprint.pprint(sim.evaluate(), sort_dicts=False)
     sim.visualize(save_path=args.out_img, show=True)

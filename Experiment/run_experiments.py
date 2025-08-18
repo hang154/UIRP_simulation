@@ -56,8 +56,8 @@ def _parse_args(argv: list[str] | None = None):
         help="BaselineScheduler 알고리즘: bf (Brute Force) 또는 cp (CP-SAT)"
     )
     pa.add_argument(
-        "--time-gap-h", type=int, default=1,
-        help="스케줄러 ticker 시간 간격 (hours)"
+        "--time-gap-min", type=int, default=5,
+        help="스케줄러 ticker 시간 간격 (minutes)"
     )
     pa.add_argument(
         "--result-out", default=None, help="평가 결과 JSON 저장 경로 (선택)"
@@ -106,7 +106,7 @@ def main():
     sch = BaselineScheduler(
         algo=args.algo,
         verbose=(args.v >= 1),
-        time_gap=datetime.timedelta(hours=args.time_gap_h),
+        time_gap=datetime.timedelta(minutes=args.time_gap_min),
     )
 
     # 3) verbose 로그 파일 저장 설정 ----------------------------------------

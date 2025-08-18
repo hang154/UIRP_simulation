@@ -16,7 +16,7 @@ except Exception:  # pragma: no cover - fallback when tqdm is unavailable
 Assignment = tuple[str, int, datetime.datetime, datetime.datetime, int]
 
 class BaselineScheduler:
-    def __init__(self, *, algo="bf", time_gap=datetime.timedelta(hours=1),
+    def __init__(self, *, algo="bf", time_gap=datetime.timedelta(minutes=5),
                  selector: TaskSelector = None,
                  evaluator: MetricEvaluator = None,
                  verbose=False):
