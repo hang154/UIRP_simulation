@@ -1,6 +1,7 @@
 # Core/Scheduler/scheduler.py
 import datetime
 import math
+import time
 from typing import List
 from Model.tasks import Tasks, Task
 from Model.providers import Providers
@@ -19,7 +20,7 @@ class BaselineScheduler:
     def __init__(self, *, algo="bf", time_gap=datetime.timedelta(minutes=5),
                  selector: TaskSelector = None,
                  evaluator: MetricEvaluator = None,
-                 verbose=False):
+                 verbose: int = 0):
         from Core.Scheduler.task_selector.fifo import FIFOTaskSelector
         from Core.Scheduler.metric_evaluator.baseline import BaselineEvaluator
         self.selector = selector or FIFOTaskSelector()
@@ -51,15 +52,14 @@ class BaselineScheduler:
             if all(st is not None for st, _ in t.scene_allocation_data):
                 continue
 
-            best = self.generator.best_combo(t, ps, now, self.evaluator, verbose=self.verbose)
+            best = self.generator.best_combo(t, ps, now, self.evaluator, verbose=self.verbose >= 2)
             if best is None:
                 remain.append(t)
                 continue
             cmb, t_tot, cost = best
-            if self.verbose:
+            if self.verbose >= 2:
                 print(f"[{t.id}] choose {cmb} t={t_tot:.2f}h cost={cost:.1f}$")
-            before_missing = sum(1 for st, _ in t.scene_allocation_data if st is None)
-            new_assgn = self.dispatcher.dispatch(t, cmb, now, ps, self.evaluator, self.verbose)
+            new_assgn = self.dispatcher.dispatch(t, cmb, now, ps, self.evaluator, self.verbose >= 2)
             new += new_assgn
             after_missing = sum(1 for st, _ in t.scene_allocation_data if st is None)
             # Keep tasks with remaining scenes for the next iteration
@@ -82,10 +82,28 @@ class BaselineScheduler:
         if time_end is None:
             time_end = max(t.deadline for t in tasks) + datetime.timedelta(days=1)
         steps = math.ceil((time_end - time_start) / self.time_gap)
-        pbar = tqdm(range(steps), disable=not self.verbose)
-        for _ in pbar:
+        pbar = tqdm(range(steps), disable=self.verbose < 1)
+        for step in pbar:
+            step_start = time.time()
             self._feed(now, tasks)
-            self.results += self._schedule_once(now, ps)
+            feed_elapsed = time.time() - step_start
+            waiting_before = len(self.waiting_tasks)
+            sched_start = time.time()
+            new = self._schedule_once(now, ps)
+            sched_elapsed = time.time() - sched_start
+            waiting_after = len(self.waiting_tasks)
+            self.results += new
+            total_elapsed = time.time() - step_start
+            if self.verbose >= 1:
+                msg = (
+                    f"[step {step}] waiting={waiting_before}->{waiting_after} "
+                    f"assigned={len(new)} feed={feed_elapsed:.3f}s "
+                    f"schedule={sched_elapsed:.3f}s total={total_elapsed:.3f}s"
+                )
+                if hasattr(pbar, "write"):
+                    pbar.write(msg)
+                else:
+                    print(msg)
             if all(all(st is not None for st, _ in t.scene_allocation_data) for t in tasks):
                 break
             now += self.time_gap

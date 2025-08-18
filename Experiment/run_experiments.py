@@ -66,7 +66,7 @@ def _parse_args(argv: list[str] | None = None):
         "--log-file", default=None,
         help="상세 verbose 로그를 저장할 파일 경로 (선택)"
     )
-    pa.add_argument("-v", action="count", default=0, help="-v: verbose, -vv: more verbose")
+    pa.add_argument("-v", action="count", default=0, help="-v: step logs, -vv: detailed logs")
 
     args, _ = pa.parse_known_args(argv)
     return args
@@ -105,7 +105,7 @@ def main():
     sim = Simulator(cfg_path)
     sch = BaselineScheduler(
         algo=args.algo,
-        verbose=(args.v >= 1),
+        verbose=args.v,
         time_gap=datetime.timedelta(minutes=args.time_gap_min),
     )
 

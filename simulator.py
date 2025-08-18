@@ -162,12 +162,12 @@ if __name__ == "__main__":
     pa.add_argument("--config", default="config.json")
     pa.add_argument("--algo",   default="bf", help="bf | cp")
     pa.add_argument("--out-img", default="schedule.png", help="Output image path")
-    pa.add_argument("-v", action="count", default=0, help="-v / -vv for verbose")
+    pa.add_argument("-v", action="count", default=0, help="-v: step logs, -vv: detailed logs")
     args = pa.parse_args()
 
     sim = Simulator(args.config)
     sch = BaselineScheduler(algo=args.algo,
-                            verbose=args.v >= 1,
+                            verbose=args.v,
                             time_gap=datetime.timedelta(minutes=5))
     sim.schedule(sch)
     pprint.pprint(sim.evaluate(), sort_dicts=False)
