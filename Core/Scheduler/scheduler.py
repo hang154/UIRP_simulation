@@ -39,12 +39,27 @@ class BaselineScheduler:
         # skipped until this time unless new tasks arrive.
         self._next_provider_event: datetime.datetime | None = None
 
-    def _feed(self, now, tasks):
+    def _feed(self, prev: datetime.datetime, now: datetime.datetime, tasks):
+        """Add newly available tasks and drop expired ones.
+
+        Tasks whose deadlines have passed are removed from the waiting list.
+        New tasks are added only if their start_time is within ``(prev, now]`` to
+        avoid re-adding completed tasks.
+        """
+
+        # Drop expired tasks
+        expired = {t.id for t in self.waiting_tasks if t.deadline < now}
+        if expired:
+            self.waiting_tasks = [t for t in self.waiting_tasks if t.deadline >= now]
+            self._unschedulable.difference_update(expired)
+
         ids = {t.id for t in self.waiting_tasks}
         for t in tasks:
-            # Add task to queue if its start time has arrived and it still has unassigned scenes
+            # Add task to queue if it becomes available in this interval and it
+            # still has unassigned scenes
             if (
-                t.start_time <= now
+                prev < t.start_time <= now
+                and t.deadline >= now
                 and t.id not in ids
                 and any(st is None for st, _ in t.scene_allocation_data)
             ):
@@ -99,13 +114,14 @@ class BaselineScheduler:
                     starts.append(min(a[0] for a in p.available_hours))
             time_start = min(starts) if starts else min(t.start_time for t in tasks)
         now = time_start
+        prev = now - self.time_gap
         if time_end is None:
             time_end = max(t.deadline for t in tasks) + datetime.timedelta(days=1)
         steps = math.ceil((time_end - time_start) / self.time_gap)
         pbar = tqdm(range(steps), disable=self.verbose < 1)
         for step in pbar:
             step_start = time.time()
-            self._feed(now, tasks)
+            self._feed(prev, now, tasks)
             feed_elapsed = time.time() - step_start
             waiting_before = len(self.waiting_tasks)
             sched_start = time.time()
@@ -136,5 +152,5 @@ class BaselineScheduler:
                     print(msg)
             if all(all(st is not None for st, _ in t.scene_allocation_data) for t in tasks):
                 break
-            now += self.time_gap
+            prev, now = now, now + self.time_gap
         return self.results
