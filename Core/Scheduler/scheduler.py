@@ -39,17 +39,14 @@ class BaselineScheduler:
         # skipped until this time unless new tasks arrive.
         self._next_provider_event: datetime.datetime | None = None
 
-    def _feed(self, now, tasks):
-        ids = {t.id for t in self.waiting_tasks}
+    def _feed(self, now, prev, tasks):
         for t in tasks:
-            # Add task to queue if its start time has arrived and it still has unassigned scenes
-            if (
-                t.start_time <= now
-                and t.id not in ids
-                and any(st is None for st, _ in t.scene_allocation_data)
-            ):
+            if prev is None:
+                cond = t.start_time <= now
+            else:
+                cond = prev < t.start_time <= now
+            if cond:
                 self.waiting_tasks.append(t)
-        self.waiting_tasks.sort(key=lambda t: t.start_time)
 
     def _schedule_once(self, now, ps):
         new: List[Assignment] = []
@@ -99,13 +96,14 @@ class BaselineScheduler:
                     starts.append(min(a[0] for a in p.available_hours))
             time_start = min(starts) if starts else min(t.start_time for t in tasks)
         now = time_start
+        prev = None
         if time_end is None:
             time_end = max(t.deadline for t in tasks) + datetime.timedelta(days=1)
         steps = math.ceil((time_end - time_start) / self.time_gap)
         pbar = tqdm(range(steps), disable=self.verbose < 1)
         for step in pbar:
             step_start = time.time()
-            self._feed(now, tasks)
+            self._feed(now, prev, tasks)
             feed_elapsed = time.time() - step_start
             waiting_before = len(self.waiting_tasks)
             sched_start = time.time()
@@ -136,5 +134,6 @@ class BaselineScheduler:
                     print(msg)
             if all(all(st is not None for st, _ in t.scene_allocation_data) for t in tasks):
                 break
+            prev = now
             now += self.time_gap
         return self.results
