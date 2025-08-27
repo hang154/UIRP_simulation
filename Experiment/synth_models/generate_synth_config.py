@@ -14,7 +14,7 @@ HOURS_PER_WEEK = 7 * 24
 FPS = 30
 # gen_config에서 쓰던 비트레이트 모델: 5 Mbps -> MB/frame
 SIZE_PER_FRAME_MB = 5 / 8 / FPS
-WORKSET = [480, 720, 1080, 1440, 2160]
+WORKSET = [48, 72, 108, 144, 216]
 
 # -----------------------------------------------------
 def _load_models(models_dir: Path):
@@ -33,31 +33,90 @@ def _to_iso(ts: dt.datetime) -> str:
     return ts.replace(microsecond=0).isoformat(timespec="seconds")
 
 def _hour_blocks_to_intervals(mask: np.ndarray, base: dt.datetime):
-    """0/1 시계열(시간격자) -> ISO 구간 리스트 [[start,end], ...]"""
+    """0/1 시계열(시간격자) -> ISO 구간 리스트 [[start,end], ...]
+    각 interval을 최소 8시간 이상으로 확장하되, 인접 interval과 겹치지 않게 조정함."""
     out = []
     n = len(mask)
     i = 0
+    segments = []
+    # collect contiguous segments of ones
     while i < n:
         if mask[i] == 1:
             j = i + 1
             while j < n and mask[j] == 1:
                 j += 1
-            st = base + dt.timedelta(hours=int(i))
-            ed = base + dt.timedelta(hours=int(j))
-            out.append([_to_iso(st), _to_iso(ed)])
+            segments.append((i, j))
+            i = j
+        else:
+            i += 1
+    # extend each segment to at least 8 hours without overlapping the next segment
+    MIN_DURATION = 8
+    extended_segments = []
+    for idx, (start, end) in enumerate(segments):
+        desired_end = start + MIN_DURATION
+        new_end = max(end, desired_end)
+        # clamp new_end to avoid overlapping the next segment
+        if idx + 1 < len(segments):
+            next_start, _ = segments[idx + 1]
+            if new_end > next_start:
+                new_end = next_start
+        new_end = min(new_end, n)
+        extended_segments.append((start, new_end))
+    # convert indices to ISO-formatted datetime intervals
+    for (i, j) in extended_segments:
+        st = base + dt.timedelta(hours=int(i))
+        ed = base + dt.timedelta(hours=int(j))
+        out.append([_to_iso(st), _to_iso(ed)])
+    return out
+
+def _smooth_binary_mask(mask: np.ndarray, min_on: int, min_off: int) -> np.ndarray:
+    """Ensure minimum run lengths for 0/1 sequences."""
+    out = mask.copy()
+    n = len(out)
+    # Remove short availability segments
+    i = 0
+    while i < n:
+        if out[i] == 1:
+            j = i + 1
+            while j < n and out[j] == 1:
+                j += 1
+            if j - i < min_on:
+                out[i:j] = 0
+            i = j
+        else:
+            i += 1
+    # Fill short gaps
+    i = 0
+    while i < n:
+        if out[i] == 0:
+            j = i + 1
+            while j < n and out[j] == 0:
+                j += 1
+            if j - i < min_off:
+                out[i:j] = 1
             i = j
         else:
             i += 1
     return out
 
-def _sample_provider_availability(weeks: int, alpha: np.ndarray, beta: np.ndarray, rng: np.random.Generator):
+
+def _sample_provider_availability(
+    weeks: int,
+    alpha: np.ndarray,
+    beta: np.ndarray,
+    rng: np.random.Generator,
+    min_on: int = 4,
+    min_off: int = 2,
+):
     """주차 수 만큼 provider 가용 마스크 생성 (시간단위)"""
     assert len(alpha) == HOURS_PER_WEEK and len(beta) == HOURS_PER_WEEK
     # 각 hour-of-week별 가용확률을 Beta에서 한 번 샘플 → provider 고유 주차 패턴
     p_how = rng.beta(alpha, beta)  # shape (168,)
     # weeks 만큼 반복해서 베르누이 샘플
     p = np.tile(p_how, weeks)
-    return (rng.random(HOURS_PER_WEEK * weeks) < p).astype(np.uint8)
+    mask = (rng.random(HOURS_PER_WEEK * weeks) < p).astype(np.uint8)
+    # 작은 가용/비가용 구간을 정리해 더 긴 텀을 만들기
+    return _smooth_binary_mask(mask, min_on=min_on, min_off=min_off)
 
 def _closest(val, candidates):
     return min(candidates, key=lambda v: abs(v - val))
@@ -154,10 +213,10 @@ def generate_config(models_dir: str,
     end_cap = base + dt.timedelta(weeks=weeks, seconds=-1)
 
     # ---------- Providers ----------
-    prov_smpl = prov_gc.sample(n_providers)
+    prov_smpl = prov_gc.sample(num_rows=n_providers)
     providers = []
     for i, row in prov_smpl.reset_index(drop=True).iterrows():
-        throughput = int(max(1, round(_safe_num(row.get("throughput"), lo=1))))
+        throughput = int(max(1, round(_safe_num(row.get("throughput"), lo=1))))*5
         bandwidth  = round(_safe_num(row.get("bandwidth_mbps"), lo=10), 1)
         price_h    = round(_safe_num(row.get("price_per_gpu_h"), lo=0.01), 2)
         mask = _sample_provider_availability(weeks, alpha, beta, rng)
@@ -165,18 +224,18 @@ def generate_config(models_dir: str,
         providers.append({
             "id": f"synth_m{i:04d}",
             "throughput": throughput,
-            "bandwidth_mbps": bandwidth,
-            "price_per_gpu_h": price_h,
+            "bandwidth": bandwidth,
+            "price": price_h,
             "available_hours": intervals
         })
 
     # ---------- Tasks ----------
-    tasks_raw = task_gan.sample(n_tasks).reset_index(drop=True)
+    tasks_raw = task_gan.sample(num_rows=n_tasks).reset_index(drop=True)
 
     tasks = []
     for i, row in tasks_raw.iterrows():
         # 스칼라 후처리 & 클램프
-        global_mb = round(_safe_num(row.get("global_file_size"), lo=1.0), 2)
+        global_mb = int(round(_safe_num(row.get("global_file_size"), lo=1.0), 2)/10)
         scene_num = int(max(1, round(_safe_num(row.get("scene_number"), lo=1))))
         bw        = round(_safe_num(row.get("bandwidth"), lo=1.0), 1)
         budget    = round(_safe_num(row.get("budget"),   lo=0.01), 2)
@@ -195,6 +254,11 @@ def generate_config(models_dir: str,
         # scene_file_size: Dirichlet 비율로 프레임 수 분할
         total_frames = _frames_from_mb(global_mb)
         sizes = _sample_scene_sizes(scene_num, total_frames, dirichlet_map, rng)
+        if scene_num >= 60:
+            while scene_num > 30:
+                scene_num //= 2
+                sizes = sizes[:scene_num]
+            global_mb = round(sum(sizes) * SIZE_PER_FRAME_MB, 2)
 
         # 시간 샘플링 (naive ISO)
         st = _sample_start_time(base, weeks, how_hist, rng)
@@ -223,7 +287,7 @@ def _parse():
     )
     ap.add_argument("--models", default="synth_models", help="train_synth_models.py 출력 디렉토리")
     ap.add_argument("--out", default="config_generated.json")
-    ap.add_argument("--weeks", type=int, default=2, help="생성할 주차 수")
+    ap.add_argument("--weeks", type=int, default=1, help="생성할 주차 수")
     ap.add_argument("--base-day", type=str, default=None, help="기준 시작시각 ISO (예: 2017-12-01T00:00:00)")
     ap.add_argument("--n-providers", type=int, default=None, help="생성할 provider 수(기본: 학습 메타)")
     ap.add_argument("--n-tasks", type=int, default=None, help="생성할 task 수(기본: 주당 평균×weeks)")
