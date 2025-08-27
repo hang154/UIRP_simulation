@@ -7,8 +7,8 @@ from Core.Scheduler.interface import MetricEvaluator
 
 class BaselineEvaluator(MetricEvaluator):
     """
-    - 하드 제약: '지금(now)' 가용구간(available_hours)에 즉시 연속 배치 가능한지
-                + 동일 타임스텝에서 한 provider에 1개 씬만 허용
+    - 하드 제약: 한 provider에 중복 할당을 하거나 이미 작업 중인 provider에
+      할당하는 조합은 불가능
     - 소프트 제약: 예산/데드라인 초과는 허용하되 efficiency에서 패널티
     """
     def __init__(
@@ -56,14 +56,6 @@ class BaselineEvaluator(MetricEvaluator):
         d = self._t_tx(t, s, p) + self._t_cmp(t, p)
         return d, d * p.price_per_gpu_hour
 
-    # -------- now 포함 가용구간 길이(시간) --------
-    @staticmethod
-    def _cap_now_hours_from_avail(prov, now: dt.datetime) -> float:
-        for s, e in getattr(prov, "available_hours", []):
-            if s <= now < e:
-                return max(0.0, (e - now).total_seconds() / 3600.0)
-        return 0.0
-
     # -------- 메인 판정 --------
     def feasible(self, t, cmb, now: dt.datetime, ps) -> Tuple[bool, float, float, int, float, float]:
         # 이번 스텝 미배치 수
@@ -79,10 +71,18 @@ class BaselineEvaluator(MetricEvaluator):
                 continue
             group.setdefault(pid, []).append(sid)
 
-        # HARD: 같은 provider에 2개 이상 배정된 조합은 즉시 불가
-        for sids in group.values():
+        # HARD: 같은 provider에 2개 이상 배정되거나 이미 작업 중이면 불가
+        for pid, sids in group.items():
             if len(sids) > 1:
                 return False, math.inf, math.inf, deferred, math.inf, math.inf
+            prov = ps[pid]
+            for rec in getattr(prov, "schedule", []):
+                if len(rec) == 3:
+                    _tid, st, ft = rec
+                else:
+                    _tid, _sid, st, ft = rec
+                if st <= now < ft:
+                    return False, math.inf, math.inf, deferred, math.inf, math.inf
 
         # 과거 같은 task의 지출 (provider 스케줄 길이 기반 캐시)
         key = (t.id, tuple(len(getattr(p, "schedule", [])) for p in ps))
@@ -102,20 +102,12 @@ class BaselineEvaluator(MetricEvaluator):
         incr_cost = 0.0
         per_prov_h: Dict[int, float] = {}
 
-        # per-scene로 dur ≤ Lp(now) 확인
         for pidx, sids in group.items():
             prov = ps[pidx]
-            Lp = self._cap_now_hours_from_avail(prov, now)
-            if Lp <= 0.0:
-                return False, math.inf, math.inf, deferred, math.inf, math.inf
-
-            sid = sids[0]  # 1개만 존재
+            sid = sids[0]
             dur, c = self.time_cost(t, sid, prov)
             if not math.isfinite(dur) or dur <= 0.0:
                 return False, math.inf, math.inf, deferred, math.inf, math.inf
-            if dur - 1e-9 > Lp:
-                return False, math.inf, math.inf, deferred, math.inf, math.inf
-
             per_prov_h[pidx] = dur
             incr_cost += c
 
